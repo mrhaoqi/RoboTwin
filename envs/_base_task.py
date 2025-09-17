@@ -1,38 +1,42 @@
-import os
-import re
-import sapien.core as sapien
-from sapien.render import clear_cache as sapien_clear_cache
-from sapien.utils.viewer import Viewer
-import numpy as np
-import gymnasium as gym
-import pdb
-import toppra as ta
-import json
-import transforms3d as t3d
-from collections import OrderedDict
-import torch, random
+# 导入必要的库
+import os  # 提供与操作系统交互的功能
+import re  # 正则表达式模块
+import sapien.core as sapien  # SAPIEN物理引擎核心模块
+from sapien.render import clear_cache as sapien_clear_cache  # 清除渲染缓存
+from sapien.utils.viewer import Viewer  # SAPIEN可视化工具
+import numpy as np  # 数值计算库
+import gymnasium as gym  # 强化学习环境库
+import pdb  # Python调试器
+import toppra as ta  # 轨迹规划库
+import json  # JSON数据处理
+import transforms3d as t3d  # 3D变换库
+from collections import OrderedDict  # 有序字典
+import torch, random  # PyTorch和随机数生成
 
-from .utils import *
-import math
-from .robot import Robot
-from .camera import Camera
+# 导入本地模块
+from .utils import *  # 本地工具函数
+import math  # 数学库
+from .robot import Robot  # 机器人模块
+from .camera import Camera  # 相机模块
 
-from copy import deepcopy
-import subprocess
-from pathlib import Path
-import trimesh
-import imageio
-import glob
+from copy import deepcopy  # 深拷贝
+import subprocess  # 子进程管理
+from pathlib import Path  # 路径操作
+import trimesh  # 3D网格处理
+import imageio  # 图像处理
+import glob  # 文件通配符匹配
 
+# 导入全局配置
+from ._GLOBAL_CONFIGS import *  # 全局配置
 
-from ._GLOBAL_CONFIGS import *
+from typing import Optional, Literal  # 类型注解
 
-from typing import Optional, Literal
-
+# 获取当前文件路径和父目录
 current_file_path = os.path.abspath(__file__)
 parent_directory = os.path.dirname(current_file_path)
 
 
+# 基础任务类，继承自gym.Env
 class Base_Task(gym.Env):
 
     def __init__(self):
@@ -41,103 +45,108 @@ class Base_Task(gym.Env):
     # =========================================================== Init Task Env ===========================================================
     def _init_task_env_(self, table_xy_bias=[0, 0], table_height_bias=0, **kwags):
         """
-        Initialization TODO
-        - `self.FRAME_IDX`: The index of the file saved for the current scene.
-        - `self.fcitx5-configtool`: Left gripper pose (close <=0, open >=0.4).
-        - `self.ep_num`: Episode ID.
-        - `self.task_name`: Task name.
-        - `self.save_dir`: Save path.`
-        - `self.left_original_pose`: Left arm original pose.
-        - `self.right_original_pose`: Right arm original pose.
-        - `self.left_arm_joint_id`: [6,14,18,22,26,30].
-        - `self.right_arm_joint_id`: [7,15,19,23,27,31].
-        - `self.render_fre`: Render frequency.
+        初始化任务环境
+        - `self.FRAME_IDX`: 当前场景保存的文件索引。
+        - `self.fcitx5-configtool`: 左夹爪姿态（关闭 <=0，打开 >=0.4）。
+        - `self.ep_num`: 当前episode的ID。
+        - `self.task_name`: 任务名称。
+        - `self.save_dir`: 数据保存路径。
+        - `self.left_original_pose`: 左臂初始姿态。
+        - `self.right_original_pose`: 右臂初始姿态。
+        - `self.left_arm_joint_id`: 左臂关节ID列表 [6,14,18,22,26,30]。
+        - `self.right_arm_joint_id`: 右臂关节ID列表 [7,15,19,23,27,31]。
+        - `self.render_fre`: 渲染频率。
         """
         super().__init__()
-        ta.setup_logging("CRITICAL")  # hide logging
-        np.random.seed(kwags.get("seed", 0))
-        torch.manual_seed(kwags.get("seed", 0))
-        # random.seed(kwags.get('seed', 0))
+        ta.setup_logging("CRITICAL")  # 隐藏日志
+        np.random.seed(kwags.get("seed", 0))  # 设置NumPy随机种子
+        torch.manual_seed(kwags.get("seed", 0))  # 设置PyTorch随机种子
+        # random.seed(kwags.get('seed', 0))  # 设置Python随机种子
 
-        self.FRAME_IDX = 0
-        self.task_name = kwags.get("task_name")
-        self.save_dir = kwags.get("save_path", "data")
-        self.ep_num = kwags.get("now_ep_num", 0)
-        self.render_freq = kwags.get("render_freq", 10)
-        self.data_type = kwags.get("data_type", None)
-        self.save_data = kwags.get("save_data", False)
-        self.dual_arm = kwags.get("dual_arm", True)
-        self.eval_mode = kwags.get("eval_mode", False)
+        # 初始化任务相关变量
+        self.FRAME_IDX = 0  # 帧索引
+        self.task_name = kwags.get("task_name")  # 任务名称
+        self.save_dir = kwags.get("save_path", "data")  # 数据保存路径
+        self.ep_num = kwags.get("now_ep_num", 0)  # 当前episode编号
+        self.render_freq = kwags.get("render_freq", 10)  # 渲染频率
+        self.data_type = kwags.get("data_type", None)  # 数据类型
+        self.save_data = kwags.get("save_data", False)  # 是否保存数据
+        self.dual_arm = kwags.get("dual_arm", True)  # 是否使用双臂
+        self.eval_mode = kwags.get("eval_mode", False)  # 是否为评估模式
 
-        self.need_topp = True  # TODO
+        self.need_topp = True  # 是否需要轨迹规划
 
-        # Random
+        # 随机化设置
         random_setting = kwags.get("domain_randomization")
-        self.random_background = random_setting.get("random_background", False)
-        self.cluttered_table = random_setting.get("cluttered_table", False)
-        self.clean_background_rate = random_setting.get("clean_background_rate", 1)
-        self.random_head_camera_dis = random_setting.get("random_head_camera_dis", 0)
-        self.random_table_height = random_setting.get("random_table_height", 0)
-        self.random_light = random_setting.get("random_light", False)
-        self.crazy_random_light_rate = random_setting.get("crazy_random_light_rate", 0)
-        self.crazy_random_light = (0 if not self.random_light else np.random.rand() < self.crazy_random_light_rate)
-        self.random_embodiment = random_setting.get("random_embodiment", False)  # TODO
+        self.random_background = random_setting.get("random_background", False)  # 随机背景
+        self.cluttered_table = random_setting.get("cluttered_table", False)  # 杂乱桌面
+        self.clean_background_rate = random_setting.get("clean_background_rate", 1)  # 干净背景概率
+        self.random_head_camera_dis = random_setting.get("random_head_camera_dis", 0)  # 头部相机距离随机化
+        self.random_table_height = random_setting.get("random_table_height", 0)  # 桌面高度随机化
+        self.random_light = random_setting.get("random_light", False)  # 随机光照
+        self.crazy_random_light_rate = random_setting.get("crazy_random_light_rate", 0)  # 极端光照概率
+        self.crazy_random_light = (0 if not self.random_light else np.random.rand() < self.crazy_random_light_rate)  # 是否启用极端光照
+        self.random_embodiment = random_setting.get("random_embodiment", False)  # 随机化机器人形态
 
-        self.file_path = []
-        self.plan_success = True
-        self.step_lim = None
-        self.fix_gripper = False
-        self.setup_scene()
+        self.file_path = []  # 文件路径列表
+        self.plan_success = True  # 规划是否成功
+        self.step_lim = None  # 步数限制
+        self.fix_gripper = False  # 是否固定夹爪
+        self.setup_scene()  # 初始化场景
 
-        self.left_js = None
-        self.right_js = None
-        self.raw_head_pcl = None
-        self.real_head_pcl = None
-        self.real_head_pcl_color = None
+        self.left_js = None  # 左臂关节状态
+        self.right_js = None  # 右臂关节状态
+        self.raw_head_pcl = None  # 原始头部点云
+        self.real_head_pcl = None  # 实际头部点云
+        self.real_head_pcl_color = None  # 实际头部点云颜色
 
-        self.now_obs = {}
-        self.take_action_cnt = 0
-        self.eval_video_path = kwags.get("eval_video_save_dir", None)
+        self.now_obs = {}  # 当前观测
+        self.take_action_cnt = 0  # 动作计数
+        self.eval_video_path = kwags.get("eval_video_save_dir", None)  # 评估视频保存路径
 
-        self.save_freq = kwags.get("save_freq")
-        self.world_pcd = None
+        self.save_freq = kwags.get("save_freq")  # 保存频率
+        self.world_pcd = None  # 世界点云
 
-        self.size_dict = list()
-        self.cluttered_objs = list()
-        self.prohibited_area = list()  # [x_min, y_min, x_max, y_max]
-        self.record_cluttered_objects = list()  # record cluttered objects info
+        self.size_dict = list()  # 尺寸字典
+        self.cluttered_objs = list()  # 杂乱物体列表
+        self.prohibited_area = list()  # 禁止区域 [x_min, y_min, x_max, y_max]
+        self.record_cluttered_objects = list()  # 记录杂乱物体信息
 
-        self.eval_success = False
-        self.table_z_bias = (np.random.uniform(low=-self.random_table_height, high=0) + table_height_bias)  # TODO
-        self.need_plan = kwags.get("need_plan", True)
-        self.left_joint_path = kwags.get("left_joint_path", [])
-        self.right_joint_path = kwags.get("right_joint_path", [])
-        self.left_cnt = 0
-        self.right_cnt = 0
+        self.eval_success = False  # 评估是否成功
+        self.table_z_bias = (np.random.uniform(low=-self.random_table_height, high=0) + table_height_bias)  # 桌面高度偏差
+        self.need_plan = kwags.get("need_plan", True)  # 是否需要规划
+        self.left_joint_path = kwags.get("left_joint_path", [])  # 左臂关节路径
+        self.right_joint_path = kwags.get("right_joint_path", [])  # 右臂关节路径
+        self.left_cnt = 0  # 左臂计数器
+        self.right_cnt = 0  # 右臂计数器
 
-        self.instruction = None  # for Eval
+        self.instruction = None  # 评估指令
 
+        # 创建桌子和墙壁
         self.create_table_and_wall(table_xy_bias=table_xy_bias, table_height=0.74)
-        self.load_robot(**kwags)
-        self.load_camera(**kwags)
-        self.robot.move_to_homestate()
+        self.load_robot(**kwags)  # 加载机器人
+        self.load_camera(**kwags)  # 加载相机
+        self.robot.move_to_homestate()  # 移动到初始状态
 
+        # 临时关闭渲染以快速初始化
         render_freq = self.render_freq
         self.render_freq = 0
         self.together_open_gripper(save_freq=None)
         self.render_freq = render_freq
 
-        self.robot.set_origin_endpose()
-        self.load_actors()
+        self.robot.set_origin_endpose()  # 设置末端姿态
+        self.load_actors()  # 加载其他物体
 
         if self.cluttered_table:
-            self.get_cluttered_table()
+            self.get_cluttered_table()  # 生成杂乱桌面
 
+        # 检查物体稳定性
         is_stable, unstable_list = self.check_stable()
         if not is_stable:
             raise UnStableError(
                 f'Objects is unstable in seed({kwags.get("seed", 0)}), unstable objects: {", ".join(unstable_list)}')
 
+        # 评估模式下的步数限制
         if self.eval_mode:
             with open(os.path.join(CONFIGS_PATH, "_eval_step_limit.yml"), "r") as f:
                 try:
@@ -147,28 +156,39 @@ class Base_Task(gym.Env):
                     print(f"{self.task_name} not in step limit file, set to 1000")
                     self.step_lim = 1000
 
-        # info
+        # 信息字典
         self.info = dict()
-        self.info["cluttered_table_info"] = self.record_cluttered_objects
+        self.info["cluttered_table_info"] = self.record_cluttered_objects  # 杂乱桌面信息
         self.info["texture_info"] = {
             "wall_texture": self.wall_texture,
             "table_texture": self.table_texture,
-        }
-        self.info["info"] = {}
+        }  # 纹理信息
+        self.info["info"] = {}  # 其他信息
 
-        self.stage_success_tag = False
+        self.stage_success_tag = False  # 阶段成功标志
 
     def check_stable(self):
+        """
+        检查场景中所有物体是否稳定
+        返回：
+            is_stable: 是否稳定
+            unstable_list: 不稳定物体列表
+        """
         actors_list, actors_pose_list = [], []
         for actor in self.scene.get_all_actors():
             actors_list.append(actor)
 
         def get_sim(p1, p2):
+            """计算两个姿态之间的相似度"""
             return np.abs(cal_quat_dis(p1.q, p2.q) * 180)
 
         is_stable, unstable_list = True, []
 
         def check(times):
+            """
+            检查物体稳定性
+            times: 检查次数
+            """
             nonlocal self, is_stable, actors_list, actors_pose_list
             for _ in range(times):
                 self.scene.step()
@@ -192,9 +212,11 @@ class Base_Task(gym.Env):
         return is_stable, unstable_list
 
     def play_once(self):
+        """播放一次场景"""
         pass
 
     def check_success(self):
+        """检查任务是否成功"""
         pass
 
     def setup_scene(self, **kwargs):
