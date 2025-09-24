@@ -4,7 +4,7 @@ render_freq: 5
 episode_num: 50
 use_seed: false
 save_freq: 15
-embodiment: [franka-panda, franka-panda, 0.6]
+embodiment: [aloha-agilex]
 language_num: 100
 domain_randomization:
   random_background: true

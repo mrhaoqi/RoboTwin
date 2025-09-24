@@ -92,6 +92,8 @@ class Robot:
         _entity_origion_pose = sapien.Pose(_entity_origion_pose[:3], _entity_origion_pose[-4:])
         self.right_entity_origion_pose = deepcopy(_entity_origion_pose)
         self.is_dual_arm = kwargs["dual_arm_embodied"]
+        self.is_single_arm = (kwargs["dual_arm_embodied"] == "single_arm")
+        self.primary_arm = kwargs.get("primary_arm", "left")
 
         self.left_rotate_lim = left_embodiment_args.get("rotate_lim", [0, 0])
         self.right_rotate_lim = right_embodiment_args.get("rotate_lim", [0, 0])
@@ -101,7 +103,7 @@ class Robot:
         self.right_perfect_direction = right_embodiment_args.get("grasp_perfect_direction",
                                                                  ["front_right", "front_left"])[1]
 
-        if self.is_dual_arm:
+        if self.is_dual_arm or self.is_single_arm:
             loader: sapien.URDFLoader = scene.create_urdf_loader()
             loader.fix_root_link = True
             self._entity = loader.load(self.left_urdf_path)
@@ -195,19 +197,48 @@ class Robot:
             self.gripper_name.append(g[0].child_link.get_name())
 
         # camera link id
-        self.left_camera = self.left_entity.find_link_by_name("left_camera")
-        if self.left_camera is None:
-            self.left_camera = self.left_entity.find_link_by_name("camera")
-            if self.left_camera is None:
-                print("No left camera link")
-                self.left_camera = self.left_entity.get_links()[0]
+        if self.is_single_arm:
+            # For single arm robots, find available camera links
+            camera_candidates = ["platform_l515_camera_link", "camera_link", "head_camera", "wrist_camera", "camera"]
 
-        self.right_camera = self.right_entity.find_link_by_name("right_camera")
-        if self.right_camera is None:
-            self.right_camera = self.right_entity.find_link_by_name("camera")
+            # Find head camera (primary camera)
+            self.left_camera = None
+            for candidate in camera_candidates:
+                self.left_camera = self.left_entity.find_link_by_name(candidate)
+                if self.left_camera is not None:
+                    break
+
+            if self.left_camera is None:
+                # Look for any link with 'camera' in the name
+                for link in self.left_entity.get_links():
+                    if 'camera' in link.get_name().lower():
+                        self.left_camera = link
+                        break
+
+                if self.left_camera is None:
+                    print("No camera link found for single arm robot")
+                    self.left_camera = self.left_entity.get_links()[0]
+
+            # For single arm, right camera can be the same as left camera or a different one
+            # Try to find a wrist camera or use the same camera
+            self.right_camera = self.left_entity.find_link_by_name("wrist_camera_link")
             if self.right_camera is None:
-                print("No right camera link")
-                self.right_camera = self.right_entity.get_links()[0]
+                self.right_camera = self.left_camera  # Use the same camera for both
+        else:
+            # Original dual-arm logic
+            self.left_camera = self.left_entity.find_link_by_name("left_camera")
+            if self.left_camera is None:
+                self.left_camera = self.left_entity.find_link_by_name("camera")
+                if self.left_camera is None:
+                    print("No left camera link")
+                    self.left_camera = self.left_entity.get_links()[0]
+
+            self.right_camera = self.right_entity.find_link_by_name("right_camera")
+            if self.right_camera is None:
+                self.right_camera = self.right_entity.find_link_by_name("camera")
+                if self.right_camera is None:
+                    print("No right camera link")
+                    self.right_camera = self.right_entity.get_links()[0]
 
         for i, joint in enumerate(self.left_active_joints):
             if joint not in self.left_gripper:
@@ -263,16 +294,40 @@ class Robot:
         if self.is_dual_arm:
             abs_left_curobo_yml_path = abs_left_curobo_yml_path.replace("curobo.yml", "curobo_left.yml")
             abs_right_curobo_yml_path = abs_right_curobo_yml_path.replace("curobo.yml", "curobo_right.yml")
+        elif self.is_single_arm:
+            # 对于单臂机器人，只使用主臂的配置
+            if self.primary_arm == "left":
+                abs_left_curobo_yml_path = abs_left_curobo_yml_path.replace("curobo.yml", "curobo_left.yml")
+                abs_right_curobo_yml_path = abs_left_curobo_yml_path  # 右臂使用相同配置，但不会被实际使用
+            else:
+                abs_right_curobo_yml_path = abs_right_curobo_yml_path.replace("curobo.yml", "curobo_right.yml")
+                abs_left_curobo_yml_path = abs_right_curobo_yml_path  # 左臂使用相同配置，但不会被实际使用
 
         if not self.communication_flag:
-            self.left_planner = CuroboPlanner(self.left_entity_origion_pose,
-                                              self.left_arm_joints_name,
-                                              [joint.get_name() for joint in self.left_entity.get_active_joints()],
-                                              yml_path=abs_left_curobo_yml_path)
-            self.right_planner = CuroboPlanner(self.right_entity_origion_pose,
-                                               self.right_arm_joints_name,
-                                               [joint.get_name() for joint in self.right_entity.get_active_joints()],
-                                               yml_path=abs_right_curobo_yml_path)
+            if self.is_single_arm:
+                # 对于单臂机器人，只创建主臂的规划器
+                if self.primary_arm == "left":
+                    self.left_planner = CuroboPlanner(self.left_entity_origion_pose,
+                                                      self.left_arm_joints_name,
+                                                      [joint.get_name() for joint in self.left_entity.get_active_joints()],
+                                                      yml_path=abs_left_curobo_yml_path)
+                    self.right_planner = self.left_planner  # 右臂规划器指向左臂规划器
+                else:
+                    self.right_planner = CuroboPlanner(self.right_entity_origion_pose,
+                                                       self.right_arm_joints_name,
+                                                       [joint.get_name() for joint in self.right_entity.get_active_joints()],
+                                                       yml_path=abs_right_curobo_yml_path)
+                    self.left_planner = self.right_planner  # 左臂规划器指向右臂规划器
+            else:
+                # 对于双臂机器人，创建两个独立的规划器
+                self.left_planner = CuroboPlanner(self.left_entity_origion_pose,
+                                                  self.left_arm_joints_name,
+                                                  [joint.get_name() for joint in self.left_entity.get_active_joints()],
+                                                  yml_path=abs_left_curobo_yml_path)
+                self.right_planner = CuroboPlanner(self.right_entity_origion_pose,
+                                                   self.right_arm_joints_name,
+                                                   [joint.get_name() for joint in self.right_entity.get_active_joints()],
+                                                   yml_path=abs_right_curobo_yml_path)
         else:
             self.left_conn, left_child_conn = mp.Pipe()
             self.right_conn, right_child_conn = mp.Pipe()

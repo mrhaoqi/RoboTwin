@@ -116,6 +116,14 @@ def main(task_name=None, task_config=None):
         args["right_robot_file"] = get_embodiment_file(embodiment_type[0])
         # 设置为双臂实施模式
         args["dual_arm_embodied"] = True
+    # 处理真正的单臂机器人配置（实施类型长度为2）如：[rm_Lifting_robot_65B_jaw_description, "single_arm"]
+    elif len(embodiment_type) == 2:
+        # 单臂机器人：左臂使用指定的机器人文件，右臂使用虚拟配置
+        args["left_robot_file"] = get_embodiment_file(embodiment_type[0])
+        args["right_robot_file"] = get_embodiment_file(embodiment_type[0])  # 右臂也指向同一个文件，但会被特殊处理
+        # 设置为单臂实施模式
+        args["dual_arm_embodied"] = "single_arm"  # 新的模式标识
+        args["primary_arm"] = "left"  # 指定主要使用的臂
     # 处理双臂机器人配置（实施类型长度为3，包含左臂、右臂和距离参数）如：franka-panda, franka-panda, 0.6
     elif len(embodiment_type) == 3:
         # 左右机械臂使用不同的机器人文件
@@ -126,8 +134,8 @@ def main(task_name=None, task_config=None):
         # 设置为非双臂实施模式
         args["dual_arm_embodied"] = False
     else:
-        # 如果实施类型参数数量不是1或3，抛出异常
-        raise "number of embodiment config parameters should be 1 or 3"
+        # 如果实施类型参数数量不是1、2或3，抛出异常
+        raise "number of embodiment config parameters should be 1, 2, or 3"
 
     # 加载左机械臂的实施配置
     args["left_embodiment_config"] = get_embodiment_config(args["left_robot_file"])

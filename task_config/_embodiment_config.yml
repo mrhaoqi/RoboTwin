@@ -12,3 +12,10 @@ ARX-X5:
 
 ur5-wsg:
   file_path: "./assets/embodiments/ur5-wsg"
+
+rm_Lifting_robot_65B_jaw_description:
+  file_path: "./assets/embodiments/rm_Lifting_robot_65B_jaw_description"
+
+rm65b:
+  file_path: "./assets/embodiments/rm65b"
+
