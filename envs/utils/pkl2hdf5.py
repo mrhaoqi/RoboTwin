@@ -75,13 +75,51 @@ def create_hdf5_from_dict(hdf5_group, data_dict):
                 print(f"Error storing value for key '{key}': {e}")
 
 
+def compose_camera_grid(observation, order=("head_camera", "left_camera", "right_camera")):
+    """把各路相机的 RGB 序列横向拼成一条预览视频。
+
+    各相机分辨率可能不同（如 head 320x180、wrist 320x240），按最大高度顶部对齐补黑边。
+    只拼接实际存在的相机，缺失的跳过；因此单臂 / 未开腕部相机的配置同样适用。
+    """
+    panels, names = [], []
+    for cam in order:
+        rgb = observation.get(cam, {}).get("rgb") if isinstance(observation, Mapping) else None
+        if rgb is None or len(rgb) == 0:
+            continue
+        panels.append(np.asarray(rgb))
+        names.append(cam)
+
+    if not panels:
+        raise ValueError("observation 中没有任何可用的相机 rgb 序列")
+    if len(panels) == 1:
+        return panels[0]
+
+    n_frames = min(p.shape[0] for p in panels)
+    max_h = max(p.shape[1] for p in panels)
+
+    out = []
+    for i in range(n_frames):
+        row = []
+        for p, name in zip(panels, names):
+            img = p[i].copy()
+            h, w = img.shape[:2]
+            if h < max_h:
+                img = np.pad(img, ((0, max_h - h), (0, 0), (0, 0)), mode="constant")
+            cv2.putText(img, name.replace("_camera", ""), (6, 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            row.append(img)
+        out.append(np.hstack(row))
+    return np.stack(out)
+
+
 def pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path):
     data_list = parse_dict_structure(load_pkl_file(pkl_files[0]))
     for pkl_file_path in pkl_files:
         pkl_file = load_pkl_file(pkl_file_path)
         append_data_to_structure(data_list, pkl_file)
 
-    images_to_video(np.array(data_list["observation"]["head_camera"]["rgb"]), out_path=video_path)
+    # 预览视频拼接全部相机（原实现只写 head_camera，腕部画面仅存在于 hdf5 中）
+    images_to_video(compose_camera_grid(data_list["observation"]), out_path=video_path)
 
     with h5py.File(hdf5_path, "w") as f:
         create_hdf5_from_dict(f, data_list)

@@ -51,9 +51,74 @@ def get_task_config(task_name):
     return args
 
 
-def data_transform(path, episode_num, save_path):
+# ============ 单臂本体数据规整 ============
+# RoboTwin 的「单臂模式」（embodiment 列表长度为 1）实为 dual_arm_embodied=True，
+# 同一台机器人同时充当左右臂，数据仍是 14 维双臂格式。任务按物体位置动态选臂
+# （如 envs/place_object_stand.py:106），导致有效夹爪信号在 state[6] 与 state[13]
+# 之间逐 episode 翻转，未使用侧恒为初值 1.0（死值）。
+# 实测 place_object_stand 10 条：6 条 left、4 条 right。
+# 规整做法：把有效夹爪值同时写入两个位置，臂关节数据不动、维度不变。
+NORMALIZE_GRIPPER = True
+
+_GRIPPER_ACTIVE_EPS = 0.05  # max-min 超过此值视为该通道有动作
+
+
+def load_scene_info(path):
+    """读取 scene_info.json；不存在时返回空 dict（由启发式兜底）。"""
+    p = os.path.join(path, "scene_info.json")
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[normalize] 读取 {p} 失败（{e}），改用启发式判定")
+        return {}
+
+
+def resolve_active_arm(scene_info, ep_idx, left_gripper, right_gripper):
+    """判定该 episode 的有效臂。
+
+    返回 "left" / "right" / None（None 表示不做规整）。
+
+    一级：scene_info.json 的 info["{a}"]，由任务代码写入，权威。
+    二级：取两个夹爪通道中 max-min 较大者。
+
+    两种情况明确不规整（返回 None）并告警，不做猜测：
+      - 双通道都有动作 → 真双臂数据（piper / aloha 等），本规整不适用
+      - 双通道都无动作 → 夹爪全程未动，无信号可传递
+    """
+    l_rng = float(np.max(left_gripper) - np.min(left_gripper))
+    r_rng = float(np.max(right_gripper) - np.min(right_gripper))
+    l_act, r_act = l_rng > _GRIPPER_ACTIVE_EPS, r_rng > _GRIPPER_ACTIVE_EPS
+
+    if l_act and r_act:
+        print(f"[normalize] episode{ep_idx}: 左右夹爪均有动作"
+              f"（{l_rng:.3f} / {r_rng:.3f}），判定为真双臂数据，跳过规整")
+        return None
+    if not l_act and not r_act:
+        print(f"[normalize] episode{ep_idx}: 左右夹爪均无动作"
+              f"（{l_rng:.3f} / {r_rng:.3f}），无有效信号，跳过规整")
+        return None
+
+    tag = scene_info.get(f"episode_{ep_idx}", {}).get("info", {}).get("{a}")
+    if tag in ("left", "right"):
+        heuristic = "left" if l_rng > r_rng else "right"
+        if tag != heuristic:
+            print(f"[normalize] episode{ep_idx}: scene_info 标记为 {tag}，"
+                  f"但夹爪方差指向 {heuristic}，以 scene_info 为准")
+        return tag
+
+    heuristic = "left" if l_rng > r_rng else "right"
+    print(f"[normalize] episode{ep_idx}: scene_info 缺少 {{a}} 标记，"
+          f"按夹爪方差判定为 {heuristic}")
+    return heuristic
+
+
+def data_transform(path, episode_num, save_path, normalize_gripper=NORMALIZE_GRIPPER):
     begin = 0
     floders = os.listdir(path)
+    scene_info = load_scene_info(path) if normalize_gripper else {}
     # assert episode_num <= len(floders), "data num not enough"
 
     if not os.path.exists(save_path):
@@ -86,6 +151,9 @@ def data_transform(path, episode_num, save_path):
         left_arm_dim = []
         right_arm_dim = []
 
+        active_arm = (resolve_active_arm(scene_info, i, left_gripper_all, right_gripper_all)
+                      if normalize_gripper else None)
+
         last_state = None
         for j in range(0, left_gripper_all.shape[0]):
 
@@ -95,6 +163,13 @@ def data_transform(path, episode_num, save_path):
                 right_gripper_all[j],
                 right_arm_all[j],
             )
+
+            # 规整：把有效臂的夹爪值同时写入两个通道，消除逐 episode 的通道翻转。
+            # active_arm 为 None 时保持上游原始行为。
+            if active_arm == "left":
+                right_gripper = left_gripper
+            elif active_arm == "right":
+                left_gripper = right_gripper
 
             state = np.array(left_arm.tolist() + [left_gripper] + right_arm.tolist() + [right_gripper])  # joints angle
 
@@ -161,6 +236,17 @@ if __name__ == "__main__":
         default=50,
         help="Number of episodes to process (e.g., 50)",
     )
+    parser.add_argument(
+        "--no-normalize-gripper",
+        action="store_true",
+        help="关闭单臂本体的夹爪通道规整，保持上游原始行为（用于对照与回归）",
+    )
+    parser.add_argument(
+        "--save-dir",
+        type=str,
+        default=None,
+        help="覆盖默认输出目录（默认 processed_data/<task>-<setting>-<num>）",
+    )
     args = parser.parse_args()
 
     task_name = args.task_name
@@ -172,9 +258,12 @@ if __name__ == "__main__":
     begin = 0
     print(f'read data from path:{os.path.join("data", load_dir)}')
 
-    target_dir = f"processed_data/{task_name}-{setting}-{expert_data_num}"
+    target_dir = args.save_dir or f"processed_data/{task_name}-{setting}-{expert_data_num}"
+    normalize = not args.no_normalize_gripper
+    print(f"[normalize] 夹爪通道规整: {'开启' if normalize else '关闭'}")
     begin = data_transform(
         load_dir,
         expert_data_num,
         target_dir,
+        normalize_gripper=normalize,
     )

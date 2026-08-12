@@ -185,7 +185,7 @@ def run(TASK_ENV, args):
         print("\033[93m" + "[Start Data Collection]" + "\033[0m")
 
         args["need_plan"] = False
-        args["render_freq"] = 0
+        args["render_freq"] = args.get("eval_render_freq", 0)
         args["save_data"] = True
 
         clear_cache_freq = args["clear_cache_freq"]
@@ -225,6 +225,14 @@ def run(TASK_ENV, args):
                 json.dump(info_db, file, ensure_ascii=False, indent=4)
 
             TASK_ENV.close_env(clear_cache=((episode_idx + 1) % clear_cache_freq == 0))
+
+            # 与 seed 搜索阶段的处理保持一致（本文件 144/154/166 行）。
+            # setup_demo() 每轮都会新建 Viewer（_base_task.py:258）且从不复用，
+            # 而 close_env() 不管 viewer，此前本循环缺少关闭调用，
+            # 导致每个 episode 残留一个窗口、仅靠 GC 回收。
+            if args["render_freq"]:
+                TASK_ENV.viewer.close()
+
             TASK_ENV.merge_pkl_to_hdf5_video()
             TASK_ENV.remove_data_cache()
             assert TASK_ENV.check_success(), "Collect Error"
