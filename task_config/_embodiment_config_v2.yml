@@ -15,7 +15,8 @@ ur5-wsg:
 
 rm65b:
   file_path: "./assets/embodiments/rm65b"
-
-# 2026-08-14: 侧装版（升降柱安装），基座截面朝向侧面
-rm65b_lateral:
-  file_path: "./assets/embodiments/rm65b_lateral"
+  
+# 单臂模式占位符 - 用于单臂任务配置
+single:
+  file_path: null
+  description: "单臂模式占位符，不加载第二个机械臂"

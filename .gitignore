@@ -28,3 +28,20 @@ envs/curobo/*
 
 /*.json*
 /*.txt
+# ---- RM65-B 本体资产与配置：自建，不可替代，必须入库 ----
+# 上游用 assets/* 与 task_config/ 把整个资产目录排除在外（原版资产从 HF 另行下载）。
+# 但 rm65b / rm65b_lateral 是本项目自建的：URDF、curobo 规划配置、碰撞模型、
+# 以及手工标定出来的安装位姿与相机外参，丢了要重做一遍标定实验。共约 6.4 MB。
+# git 规则：父目录被排除时无法直接重新包含子文件，故须逐级放开。
+!assets/embodiments/
+assets/embodiments/*
+!assets/embodiments/rm65b/
+!assets/embodiments/rm65b_lateral/
+
+!task_config/
+task_config/*
+!task_config/_embodiment_config.yml
+!task_config/_embodiment_config_v2.yml
+!task_config/demo_rm65b_*.yml
+# 损坏 mesh 的本地备份, 无保留价值(3.3 MB)
+assets/embodiments/rm65b/meshes/_broken_backup/

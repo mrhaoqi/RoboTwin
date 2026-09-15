@@ -1,0 +1,61 @@
+# RM65-B 单臂 + 精简 4C2 平行夹爪
+# 配套 URDF: urdf/rm65b.urdf (12 link / 11 joint)
+# 模板参考: assets/embodiments/ur5-wsg/config.yml (同为单臂 + mimic 夹爪)
+urdf_path: "./urdf/rm65b.urdf"
+srdf_path: "./rm65b.srdf"
+
+joint_stiffness: 1000
+joint_damping: 200
+gripper_stiffness: 1000
+gripper_damping: 200
+
+move_group: ["r_link6", "r_link6"]
+ee_joints: ["joint6", "joint6"]
+arm_joints_name: [["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+                  ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]]
+
+# 精简 4C2：4C2_Joint1 主动，其余三关节按 URDF mimic 关系从动。
+# SAPIEN 不解析 URDF 的 mimic 标签，由 envs/robot/robot.py:182-189 依此表驱动。
+gripper_name:
+  - base: "4C2_Joint1"
+    mimic: [["4C2_Joint4", -1., 0.], ["4C2_Joint5", 1., 0.], ["4C2_Joint6", 1., 0.]]
+  - base: "4C2_Joint1"
+    mimic: [["4C2_Joint4", -1., 0.], ["4C2_Joint5", 1., 0.], ["4C2_Joint6", 1., 0.]]
+
+# 指面中心距 r_link6 原点约 0.145 m（arm_jaw 0.03 + 4C2_Joint1 0.079 + 4C2_Joint5 0.0356）
+gripper_bias: 0.145
+# 实测：4C2_Joint1 = 0 指面贴合(0 mm)，= 0.82 全开(66.2 mm)。RoboTwin 约定 0=闭合、1=张开
+gripper_scale: [0, 0.82]
+fix_gripper_name: []
+
+homestate: [[0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0]]
+
+# 待标定：以下三项先取 piper 初值，按 design.md「调试路径」逐项收敛
+robot_pose: [[0, -0.45, 0.75, 0.707, 0, 0, 0.707]]
+delta_matrix: [[0, 0, -1], [0, 1, 0], [1, 0, 0]]
+global_trans_matrix: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]
+
+rotate_lim: [0.2, 1]
+grasp_perfect_direction: ["front_right", "front_left"]
+
+dual_arm: False
+# RoboTwin 无 mplib-only 规划路径：robot.py 的 set_planner 无条件构造 CuroboPlanner，
+# 本键仅作为 MplibPlanner 的 TOPP 内部模式参数。详见任务 08-05-rm65b-register-mplib 的
+# research/planner-path-finding.md
+planner: "curobo"
+
+static_camera_list:
+- name: head_camera
+  position:
+  - -0.032
+  - -0.45
+  - 1.35
+  forward:
+  - 0
+  - 0.6
+  - -0.8
+  left:
+  - -1
+  - 0
+  - 0

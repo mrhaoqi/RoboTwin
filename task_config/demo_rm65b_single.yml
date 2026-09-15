@@ -1,0 +1,41 @@
+# RM65-B 单臂配置（单参数格式，同一机器人同时充当左右臂，任务逻辑动态选择手臂）
+# 域随机化参数与 demo_piper_single.yml 保持一致（标定期曾临时关闭，已于 2026-08-05 恢复）
+# 注意：seed 失败时场景会销毁重建，viewer 会随之闪烁。要稳定观察本体几何，
+#      用仓库根目录的 view_rm65b.py（常驻窗口，与采数据流程解耦）。
+#      每条 episode 的实际动作另有 data/<task>/<config>/video/episode*.mp4 可看。
+render_freq: 0
+eval_render_freq: 5
+episode_num: 50
+use_seed: false
+save_freq: 15
+embodiment: [rm65b]
+language_num: 100
+domain_randomization:
+  random_background: true
+  cluttered_table: true
+  clean_background_rate: 0.02
+  random_head_camera_dis: 0
+  random_table_height: 0.03
+  random_light: true
+  crazy_random_light_rate: 0.02
+camera:
+  head_camera_type: L515
+  wrist_camera_type: D435
+  collect_head_camera: true
+  collect_wrist_camera: true
+data_type:
+  rgb: true
+  third_view: false
+  depth: false
+  pointcloud: false
+  observer: false
+  endpose: true
+  qpos: true
+  mesh_segmentation: false
+  actor_segmentation: false
+pcd_down_sample_num: 1024
+pcd_crop: true
+save_path: ./data
+clear_cache_freq: 5
+collect_data: true
+eval_video_log: true

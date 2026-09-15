@@ -1,0 +1,7 @@
+# 本目录的文件走普通 git 对象, 不走 LFS。
+#
+# 上游 assets/embodiments/.gitattributes 把 *.yml / *.STL / *.urdf / *.srdf 等
+# 全部纳入 LFS(原版资产从 HuggingFace 分发, 体积大)。但 rm65b 是本项目自建的、
+# 总共只有 3.1 MB, 且 GitHub **禁止向公开 fork 推送 LFS 对象**
+# ("can not upload new objects to public fork"), 走 LFS 会导致根本推不上去。
+* !filter !diff !merge

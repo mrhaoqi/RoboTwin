@@ -1,0 +1,102 @@
+# RM65-B CuRobo 运动学与规划配置
+# 蓝本: assets/embodiments/piper/curobo.yml（同为 6 关节单臂 + mimic 夹爪）
+# urdf_path 为绝对路径，换机器需跑 script/update_embodiment_config_path.py
+robot_cfg:
+  kinematics:
+    use_usd_kinematics: False
+    usd_path: null
+    usd_robot_root: null
+    isaac_usd_path: null
+    usd_flip_joints: {}
+    usd_flip_joint_limits: {}
+
+    urdf_path: ${ASSETS_PATH}/assets/embodiments/rm65b/urdf/rm65b.urdf
+    asset_root_path: null
+    base_link: "arm_base_link1"
+    ee_link: "r_link6"
+    collision_link_names:
+      [
+        "arm_base_link1",
+        "r_link1",
+        "r_link2",
+        "r_link3",
+        "r_link4",
+        "r_link5",
+        "r_link6",
+        "4C2_baselink",
+        "4C2_Link1",
+        "4C2_Link4",
+        "4C2_Link5",
+        "4C2_Link6"
+      ]
+    collision_spheres: ${ASSETS_PATH}/assets/embodiments/rm65b/collision_rm65b.yml
+    collision_sphere_buffer: 0.004
+    extra_collision_spheres: null
+    use_global_cumul: True
+
+    # 与 rm65b.srdf 的 disable_collisions 保持一致：相邻链、跨一节、腕部×夹爪、夹爪内部
+    self_collision_ignore:
+      {
+        "arm_base_link1": ["r_link1", "r_link2"],
+        "r_link1": ["r_link2", "r_link3"],
+        "r_link2": ["r_link3", "r_link4"],
+        "r_link3": ["r_link4", "r_link5"],
+        "r_link4": ["r_link5", "r_link6"],
+        "r_link5": ["r_link6", "4C2_baselink", "4C2_Link1", "4C2_Link4", "4C2_Link5", "4C2_Link6"],
+        "r_link6": ["4C2_baselink", "4C2_Link1", "4C2_Link4", "4C2_Link5", "4C2_Link6"],
+        "4C2_baselink": ["4C2_Link1", "4C2_Link4", "4C2_Link5", "4C2_Link6"],
+        "4C2_Link1": ["4C2_Link4", "4C2_Link5", "4C2_Link6"],
+        "4C2_Link4": ["4C2_Link5", "4C2_Link6"],
+        "4C2_Link5": ["4C2_Link6"]
+      }
+
+    self_collision_buffer:
+      {
+        "arm_base_link1": 0.0,
+        "r_link1": 0.0,
+        "r_link2": 0.0,
+        "r_link3": 0.0,
+        "r_link4": 0.0,
+        "r_link5": 0.0,
+        "r_link6": 0.0,
+        "4C2_baselink": 0.0,
+        "4C2_Link1": 0.0,
+        "4C2_Link4": 0.0,
+        "4C2_Link5": 0.0,
+        "4C2_Link6": 0.0
+      }
+
+    mesh_link_names:
+      [
+        "arm_base_link1",
+        "r_link1",
+        "r_link2",
+        "r_link3",
+        "r_link4",
+        "r_link5",
+        "r_link6",
+        "4C2_baselink",
+        "4C2_Link1",
+        "4C2_Link4",
+        "4C2_Link5",
+        "4C2_Link6"
+      ]
+
+    # 夹爪 4 关节锁定，开合由 robot.py 的 plan_grippers 单独处理（同 piper 锁 joint7/joint8）
+    lock_joints: {"4C2_Joint1": 0.0, "4C2_Joint4": 0.0, "4C2_Joint5": 0.0, "4C2_Joint6": 0.0}
+    extra_links: null
+
+    cspace:
+      # 10 个 active joint，顺序对齐 rm65b.urdf 的文档序（CuRobo 自行解析该 URDF）。
+      # 注意 URDF 中 4C2_Joint5 在 4C2_Joint4 之前，与 SAPIEN get_active_joints() 的
+      # 排序不同；因规划时 JointState 按关节名查找（planner.py:130/218），顺序不影响正确性，
+      # 且 retract_config / 权重均为均匀值，重排无副作用。
+      joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
+                    "4C2_Joint1", "4C2_Joint5", "4C2_Joint4", "4C2_Joint6"]
+      retract_config: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      null_space_weight: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      cspace_distance_weight: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      max_acceleration: 15.0
+      max_jerk: 500.0
+planner:
+  frame_bias: [0., 0., 0.]
