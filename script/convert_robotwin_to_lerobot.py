@@ -31,6 +31,33 @@ RoboTwin 的任务代码围绕双臂设计，单臂本体通过"同一实体兼�
 即"下一帧状态作为本帧动作"。N 帧原始数据产出 N-1 帧。这与真机拖拽示教采集时
 只能用 `state[t+1]` 当 action 是同一个约定，两批数据在这一点上可比。
 
+## ⚠️ 帧率不是 save_freq
+
+采集配置里的 `save_freq: 15` **不是 15 Hz**。它是控制循环的迭代计数阈值
+（`envs/_base_task.py`）：
+
+```python
+while ...:
+    set_arm_joints(...)      # 推进一个规划轨迹点
+    self.scene.step()        # 每次迭代恰好一个仿真步
+    if save_freq != None and i % save_freq == 0:
+        self._take_picture()
+    i += 1
+```
+
+每次迭代推进**一个**仿真步，而仿真步长是 `set_timestep(1/250)`。所以
+
+    真实采集频率 = 250 / save_freq = 250 / 15 = 16.6667 Hz
+
+按 15 Hz 声明会让时间戳系统性拉伸 11%。
+
+LeRobot 0.4.4 的 `fps` 只接受 int —— 传浮点报
+`'float' object has no attribute 'numerator'`，传 `Fraction` 报 JSON 不可序列化。
+16.667 无法精确表达，故默认取最近整数 **17**（偏差 2.0%），并在运行时打印偏差。
+
+> 重采时可以彻底消除这个问题：把 `save_freq` 设成能整除 250 的值 ——
+> 10 → 25 Hz、25 → 10 Hz、50 → 5 Hz。
+
 用法:
     ~/miniconda3/envs/lerobot/bin/python convert_robotwin_to_lerobot.py \\
         --src ~/workspace/RoboTwin/data/place_object_stand/demo_rm65b_single_150 \\
@@ -107,13 +134,33 @@ def main() -> int:
                     help="RoboTwin 采集目录, 形如 data/<task>/<config>")
     ap.add_argument("--repo-id", required=True)
     ap.add_argument("--out", type=Path, default=None, help="数据集根目录")
-    ap.add_argument("--fps", type=int, default=15,
-                    help="⚠️ RoboTwin 未显式记录帧率; 取自采集配置的 save_freq")
+    ap.add_argument("--fps", type=int, default=17,
+                    help="见 SIM_HZ 说明; 默认 17 是 250/save_freq=16.667 的最近整数")
+    ap.add_argument("--sim-timestep-hz", type=float, default=250.0,
+                    help="仿真步频, 取自 envs/_base_task.py 的 set_timestep(1/250)")
+    ap.add_argument("--save-freq", type=int, default=15,
+                    help="采集配置的 save_freq, 用于核对 --fps 是否合理")
     ap.add_argument("--episodes", type=int, default=0, help="只转前 N 条, 0=全部")
     ap.add_argument("--instruction-key", default="seen", choices=["seen", "unseen"])
     ap.add_argument("--resize", default="", help="如 640x480; 留空保持原分辨率")
     ap.add_argument("--robot-type", default="rm65b")
     args = ap.parse_args()
+
+    # fps 自检。真实采集频率 = 仿真步频 / save_freq, 见模块 docstring 的推导。
+    # LeRobot 0.4.4 的 fps 只接受 int（浮点报 'float' has no attribute 'numerator',
+    # Fraction 报 JSON 不可序列化）, 所以 16.667 这类值只能取最近整数并记下偏差。
+    true_hz = args.sim_timestep_hz / args.save_freq
+    err = abs(args.fps - true_hz) / true_hz
+    print(f"帧率    真实 {true_hz:.4f} Hz "
+          f"(= {args.sim_timestep_hz:.0f}/{args.save_freq}), 声明 {args.fps} Hz, "
+          f"偏差 {err * 100:.1f}%")
+    if err > 0.05:
+        print(f"🛑 偏差超过 5% —— 时间戳会被系统性拉伸, 请核对 --fps / --save-freq",
+              file=sys.stderr)
+        return 1
+    if err > 0.005:
+        print(f"⚠️  无法整除, 已取最近整数。若要精确, 重采时把 save_freq 设成能整除的值"
+              f"(10→25Hz, 25→10Hz, 50→5Hz)")
 
     data_dir = args.src / "data"
     if not data_dir.is_dir():
