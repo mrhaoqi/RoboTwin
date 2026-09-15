@@ -146,8 +146,13 @@ class ACT:
                 print(f"Warning: Could not find stats file at {stats_path}")
                 self.stats = None
 
-            # Load policy weights
-            ckpt_path = os.path.join(ckpt_dir, "policy_last.ckpt")
+            # Load policy weights.
+            # 默认沿用平台原行为 policy_last.ckpt；可通过 deploy_policy.yml 的 ckpt_name
+            # 或环境变量 ACT_CKPT_NAME 指定 policy_best.ckpt。
+            # 训练日志显示最优 epoch 常远早于末轮（如 3446/6000），且 L1 曲线存在明显过拟合
+            # （train ≈0.03 / val ≈0.30），此时 last 与 best 的权重差异会显著影响评估结果。
+            ckpt_name = args_override.get("ckpt_name") or os.environ.get("ACT_CKPT_NAME", "policy_last.ckpt")
+            ckpt_path = os.path.join(ckpt_dir, ckpt_name)
             print("current pwd:", os.getcwd())
             if os.path.exists(ckpt_path):
                 loading_status = self.policy.load_state_dict(torch.load(ckpt_path))
@@ -181,8 +186,13 @@ class ACT:
 
         # Prepare images following imitate_episodes.py pattern
         # Stack images from all cameras
+        #
+        # 顺序必须与训练时 SIM_TASK_CONFIGS 的 camera_names 严格一致：
+        #   ["cam_high", "cam_right_wrist", "cam_left_wrist"]
+        # 即 head -> right_wrist -> left_wrist。此前此处为 [head, left, right]，
+        # 导致左右腕画面在部署时互换，模型接收到与训练分布不符的输入。
         curr_images = []
-        camera_names = ["head_cam", "left_cam", "right_cam"]
+        camera_names = ["head_cam", "right_cam", "left_cam"]
         for cam_name in camera_names:
             curr_images.append(obs[cam_name])
         curr_image = np.stack(curr_images, axis=0)

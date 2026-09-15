@@ -159,7 +159,10 @@ def main(usr_args):
 
     st_seed = 100000 * (1 + seed)
     suc_nums = []
-    test_num = 100
+    # 默认 100，保持原行为；可用 deploy_policy.yml 的 test_num 或环境变量 EVAL_TEST_NUM 覆盖。
+    # VLA 类策略单步推理开销远高于 ACT，完整 100 episode 可能耗时十余小时，
+    # 小规模先验证链路可用性再放大，避免长时间空跑。
+    test_num = int(usr_args.get("test_num") or os.environ.get("EVAL_TEST_NUM", 100))
     topk = 1
 
     model = get_model(usr_args)

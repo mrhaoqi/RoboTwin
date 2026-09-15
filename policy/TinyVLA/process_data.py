@@ -14,6 +14,8 @@ import pdb
 task_prompt = {
     "place_object_scale": "Use one arm to grab the object and put it on the scale.",
 "place_phone_stand": "Place phone onto stand using multi-angle desk images to determine positions and plan actions.",
+    # 取自 description/task_instruction/place_object_stand.json 的 full_description
+    "place_object_stand": "use appropriate arm to place the object on the stand",
 }
 
 def load_hdf5(dataset_path):

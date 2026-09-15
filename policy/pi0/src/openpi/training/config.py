@@ -383,7 +383,7 @@ _CONFIGS = [
         name="pi0_base_aloha_robotwin_lora",
         model=pi0.Pi0Config(paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
         data=LeRobotAlohaDataConfig(
-            repo_id="test",  # your datasets repo_id
+            repo_id="place_object_stand-demo_rm65b_single-50",  # RoboTwin rm65b dataset
             adapt_to_pi=False,
             repack_transforms=_transforms.Group(inputs=[
                 _transforms.RepackTransform({
@@ -414,7 +414,7 @@ _CONFIGS = [
         name="pi0_fast_aloha_robotwin_lora",
         model=pi0_fast.Pi0FASTConfig(paligemma_variant="gemma_2b_lora"),
         data=LeRobotAlohaDataConfig(
-            repo_id="your_repo_id",  # your datasets repo_id
+            repo_id="place_object_stand-demo_rm65b_single-50",  # RoboTwin rm65b dataset
             adapt_to_pi=False,
             repack_transforms=_transforms.Group(inputs=[
                 _transforms.RepackTransform({
@@ -437,9 +437,12 @@ _CONFIGS = [
             paligemma_variant="gemma_2b_lora",
         ).get_freeze_filter(),
         batch_size=32,
-        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets/checkpoints/pi0_fast_base/params"),
+        # 2026-08-13: 改用本机已完整缓存的 pi0_fast_droid，规避 S3 节流导致的 pi0_fast_base 无法下载。
+        # 原值: "s3://openpi-assets/checkpoints/pi0_fast_base/params"
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            str(pathlib.Path("~/.cache/openpi/openpi-assets/checkpoints/pi0_fast_droid/params").expanduser())),
         num_train_steps=30000,
-        fsdp_devices=2,  # refer line 359
+        fsdp_devices=1,  # 单卡
     ),
     # pi0_base by full
     TrainConfig(

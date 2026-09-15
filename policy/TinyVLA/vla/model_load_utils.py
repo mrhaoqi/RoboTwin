@@ -35,22 +35,24 @@ def load_model(config=None, vla_config=None, rank0_print=print):
     action_args = config['action_head_args']
 
     kwargs = {"device_map": "cuda", "torch_dtype": torch.bfloat16}
+    # 2026-08-14: 官方 InternVL3 权重的 config.json 带 auto_map，配合 trust_remote_code=True 时
+    # AutoModelForCausalLM 会加载远程 InternVLChatModel（config_class=InternVLChatConfig），
+    # 与本地 TinyVLAConfig 冲突。这里直接用本地 TinyVLA 类加载，绕开 auto_map 分派。
+    from .models.internvl.modeling_tinyvla import TinyVLA
     if config['model_args'].flash_attn:
-        model = AutoModelForCausalLM.from_pretrained(
+        model = TinyVLA.from_pretrained(
             config['model_args'].model_name_or_path,
             config=vla_config,
             cache_dir=config['training_args'].cache_dir,
-            trust_remote_code=True,
             _fast_init=False,
             attn_implementation="flash_attention_2",
             **kwargs
         )
     else:
-        model = AutoModelForCausalLM.from_pretrained(
+        model = TinyVLA.from_pretrained(
             config['model_args'].model_name_or_path,
             config=vla_config,
             cache_dir=config['training_args'].cache_dir,
-            trust_remote_code=True,
             _fast_init=False,
             **kwargs,  # specified device map and dtype may cause nan initialize
         )
@@ -261,9 +263,18 @@ def load_model_for_eval(model_path, model_base, device_map="cuda:0", policy_conf
 
     else:
         print(f"load {model_path}!!!")
-        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+        # 训练产出的 checkpoint 中，config.json 的 architectures 为 "TinyVLA"，
+        # 但 auto_map 仍沿用基座 InternVL3 的映射（指向 InternVLChatModel）。
+        # 若走 AutoConfig / AutoModelForCausalLM，会按 auto_map 加载成基座类，
+        # 得到的对象没有 sample_action 方法，推理时报 AttributeError。
+        # 训练侧（train_vla.py:110）同样是显式使用 TinyVLAConfig 而非 AutoConfig，
+        # 此处与之保持一致，直接指定 TinyVLA 相关类加载。
+        from .models.internvl.configuration_tinyvla import TinyVLAConfig
+        from .models.internvl.modeling_tinyvla import TinyVLA
+
+        config = TinyVLAConfig.from_pretrained(model_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
-        model = AutoModelForCausalLM.from_pretrained(
+        model = TinyVLA.from_pretrained(
             model_path,
             config=config,
             use_safetensors=True,

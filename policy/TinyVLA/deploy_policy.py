@@ -75,7 +75,11 @@ class TinyVLA:
         }
         return self.vla_process.preprocess(s)
 
+    @torch.no_grad()
     def get_action(self, obs=None):
+        # 必须禁用梯度：三路相机各切 12 个 448 图块（dynamic_preprocess 对 640x480 的结果），
+        # 单步前向即有 36 个图块过视觉塔；若保留激活值用于反传，16 GB 显存会 OOM
+        # （且未安装 FlashAttention，走 _naive_attn 时注意力矩阵的显存开销更大）。
         stats = self.stats
         post_process = lambda a: ((a + 1) / 2) * (stats['action_max'] - stats['action_min']) + stats['action_min']
         # post_process = lambda a: a * stats['action_std'] + stats['action_mean']
@@ -104,14 +108,26 @@ def encode_obs(observation):  # Post-Process Observation
     cam_high = obs["observation"]["head_camera"]["rgb"]
     cam_left = obs["observation"]["left_camera"]["rgb"]
     cam_right = obs["observation"]["right_camera"]["rgb"]
-    cam_right = cv2.resize(cam_right, (448, 448))
-    cam_left = cv2.resize(cam_left, (448, 448))
-    cam_high = cv2.resize(cam_high, (448, 448))
-    qpos = (observation["joint_action"]["left_arm"] + [observation["joint_action"]["left_gripper"]] +
-            observation["joint_action"]["right_arm"] + [observation["joint_action"]["right_gripper"]])
-    #print("Check:", qpos)
+    # 必须与训练数据保持相同的 640x480 尺寸，不可预先压成 448x448 方图。
+    # InternVL3Process.load_image 内部的 dynamic_preprocess 会按宽高比动态切图块：
+    #   640x480 (4:3) -> 12 个 448 图块；448x448 (1:1) -> 仅 1 个图块。
+    # 若此处先 resize 成方图，模型收到的视觉 token 数量与训练时相差 12 倍。
+    # 训练侧（data_utils/dataset.py）直接使用 HDF5 中的 640x480 原图，不做缩放。
+    cam_right = cv2.resize(cam_right, (640, 480))
+    cam_left = cv2.resize(cam_left, (640, 480))
+    cam_high = cv2.resize(cam_high, (640, 480))
+    # 7 维单臂格式（环境变量 TINYVLA_ACTION_DIM=7 启用）：
+    # 单臂本体下左右两半的 6 个关节角完全相同（读的是同一批 joint 对象），
+    # 故只取一侧；夹爪同理取左侧 —— 观测中的两个夹爪值在单臂下由同一物理关节决定。
+    # 训练数据经 convert_to_7dim.py 转换时，夹爪取的是"实际在动的那一侧"，
+    # 而运行时该侧的值即为当前夹爪真实开合度，两者语义一致。
+    if os.environ.get("TINYVLA_ACTION_DIM") == "7":
+        qpos = (observation["joint_action"]["left_arm"] +
+                [observation["joint_action"]["left_gripper"]])
+    else:
+        qpos = (observation["joint_action"]["left_arm"] + [observation["joint_action"]["left_gripper"]] +
+                observation["joint_action"]["right_arm"] + [observation["joint_action"]["right_gripper"]])
     qpos = np.array(qpos)
-    #print("Check:", qpos)
     return {
         "cam_high": cam_high,
         "cam_left": cam_left,
@@ -154,6 +170,14 @@ def eval(TASK_ENV, model, observation):
     obs.update({"raw_lang": str(instruction)})
     # print("******************************")
     actions = model.get_action(obs)  # Get Action according to observation chunk
+
+    # 7 维单臂输出 -> 平台的 14 维双臂接口。
+    # TASK_ENV.take_action 按 [左臂6, 左夹爪, 右臂6, 右夹爪] 拆分，故将同一条臂的
+    # 6 个关节角与夹爪值复制到左右两路：单臂下二者本就驱动同一批物理关节
+    # （见 envs/_base_task.py 中 is_single_arm_embodiment 的处理），复制后完全一致，
+    # 不会再出现两路预测不同而相互覆盖的问题。
+    if os.environ.get("TINYVLA_ACTION_DIM") == "7":
+        actions = np.concatenate([actions, actions], axis=-1)
 
     for action in actions:  # Execute each step of the action
         # TASK_ENV.take_one_step_action(action)

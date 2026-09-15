@@ -69,6 +69,13 @@ class Base_Task(gym.Env):
         self.dual_arm = kwags.get("dual_arm", True)
         self.eval_mode = kwags.get("eval_mode", False)
 
+        # 本体物理上是否真有两条臂。注意与 Robot.is_dual_arm(=dual_arm_embodied) 区分：
+        # 后者表示「左右臂是否共用同一个 URDF 实体」，单臂本体（如 rm65b）也为 True。
+        # 这里读的是 config.yml 里的 dual_arm 字段：aloha-agilex 为 True，rm65b/piper 为 False。
+        _left_emb_cfg = kwags.get("left_embodiment_config") or {}
+        self.is_single_arm_embodiment = (not _left_emb_cfg.get("dual_arm", True)
+                                         and kwags.get("dual_arm_embodied", False))
+
         self.need_topp = True  # TODO
 
         # Random
@@ -1519,6 +1526,30 @@ class Base_Task(gym.Env):
             actions[:, left_arm_dim + 1:left_arm_dim + right_arm_dim + 1],
             actions[:, left_arm_dim + right_arm_dim + 1],
         )
+
+        # 单臂本体（左右臂共用同一 URDF 实体）下，Robot.left_arm_joints 与 right_arm_joints
+        # 由同一实体按相同关节名查得，实为同一批 joint 对象；控制循环中
+        # set_arm_joints(..., "left") 与 set_arm_joints(..., "right") 会写同一组 drive target，
+        # 后者完全覆盖前者，导致只有 right 那一路生效。
+        #
+        # 专家数据的左右两路关节角完全相同（差值恒为 0），故采集与开环回放不受影响；
+        # 但模型预测的两路存在 0.005~0.011（最大维 0.027）的差异，
+        # 而训练数据相邻帧动作变化仅约 0.016 弧度 —— 相当于每步注入 0.7~1.7 个动作步长的
+        # 随机误差。两路预测本应表达同一条臂的同一目标，此处取均值：
+        # 既消除覆盖带来的不确定性，又利用两路的冗余降低预测噪声。
+        # 合并策略可通过环境变量 SINGLE_ARM_JOINT_MODE 切换（用于对照实验）：
+        #   mean（默认）取两路均值；left 只取左路；right 只取右路。
+        # 真值数据下三者等价（两路差值恒为 0），差异仅体现在模型预测上。
+        if self.is_single_arm_embodiment and left_arm_actions.shape == right_arm_actions.shape:
+            _mode = os.environ.get("SINGLE_ARM_JOINT_MODE", "mean")
+            if _mode == "left":
+                right_arm_actions = left_arm_actions
+            elif _mode == "right":
+                left_arm_actions = right_arm_actions
+            else:
+                _mean_arm_actions = (left_arm_actions + right_arm_actions) / 2.0
+                left_arm_actions = right_arm_actions = _mean_arm_actions
+
         left_current_gripper, right_current_gripper = (
             self.robot.get_left_gripper_val(),
             self.robot.get_right_gripper_val(),
@@ -1646,6 +1677,17 @@ class Base_Task(gym.Env):
 
         now_left_id, now_right_id = 0, 0
 
+        # 单臂本体（左右臂共用同一物理实体）下，左右两路 set_gripper 会写同一个夹爪关节，
+        # 后执行者覆盖前者，导致夹爪在开/合之间逐帧震荡而抓不住物体。
+        # 任务逻辑本身只驱动一侧（按物体位置选 arm_tag），另一侧的夹爪值恒为初始张开值，
+        # 故这里选取「偏离张开状态更多」的一侧作为实际生效指令。
+        # 双臂本体（aloha-agilex）与双本体配置（如 [piper,piper,0.6]）不受影响，走原有逻辑。
+        single_arm_gripper_side = None
+        if self.is_single_arm_embodiment:
+            left_dev = float(np.max(np.abs(np.asarray(left_gripper) - 1.0))) if len(left_gripper) else 0.0
+            right_dev = float(np.max(np.abs(np.asarray(right_gripper) - 1.0))) if len(right_gripper) else 0.0
+            single_arm_gripper_side = "left" if left_dev >= right_dev else "right"
+
         # ========== Control Loop ==========
         while now_left_id < left_n_step or now_right_id < right_n_step:
 
@@ -1656,7 +1698,8 @@ class Base_Task(gym.Env):
                         left_result["velocity"][now_left_id],
                         "left",
                     )
-                self.robot.set_gripper(left_gripper[now_left_id], "left")
+                if single_arm_gripper_side is None or single_arm_gripper_side == "left":
+                    self.robot.set_gripper(left_gripper[now_left_id], "left")
 
                 now_left_id += 1
 
@@ -1667,7 +1710,8 @@ class Base_Task(gym.Env):
                         right_result["velocity"][now_right_id],
                         "right",
                     )
-                self.robot.set_gripper(right_gripper[now_right_id], "right")
+                if single_arm_gripper_side is None or single_arm_gripper_side == "right":
+                    self.robot.set_gripper(right_gripper[now_right_id], "right")
 
                 now_right_id += 1
 

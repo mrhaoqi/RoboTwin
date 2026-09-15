@@ -103,7 +103,11 @@ def parse_param():
     model_args, data_args, training_args, action_head_args = parser.parse_args_into_dataclasses()
     local_rank = training_args.local_rank
     # print("模型路径：",model_args.model_name_or_path)
-    config = AutoConfig.from_pretrained(model_args.model_name_or_path, trust_remote_code=False, **asdict(action_head_args))
+    # 2026-08-14: 官方 InternVL3 权重的 config.json 中 model_type 为 "internvl_chat"，
+    # AutoConfig 会解析成 InternVLChatConfig（缺少 policy_head_type）。
+    # TinyVLA 需要的是 vla/models/internvl/configuration_tinyvla.py 里的 TinyVLAConfig
+    # （继承 InternVLChatConfig 并补充 policy_head_type），故直接指定该类加载。
+    config = TinyVLAConfig.from_pretrained(model_args.model_name_or_path, **asdict(action_head_args))
 
     cond_dim = config.hidden_size
     if  action_head_args.policy_head_type == 'unet_diffusion_policy':
