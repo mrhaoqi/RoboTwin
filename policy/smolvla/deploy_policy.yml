@@ -1,0 +1,14 @@
+# 基础项(平台固定, 勿改)
+policy_name: null
+task_name: null
+task_config: null
+ckpt_setting: null
+seed: null
+instruction_type: unseen
+
+# SmolVLA 专属
+# 指向 lerobot-train 产出的 checkpoints/<step>/pretrained_model
+ckpt_path: ~/train_runs/smolvla_pos_lateral/checkpoints/last/pretrained_model
+device: cuda
+# 留空则用模型自带的 n_action_steps(50)。调小 = 重规划更频繁、闭环更紧, 推理更贵
+n_action_steps: null
