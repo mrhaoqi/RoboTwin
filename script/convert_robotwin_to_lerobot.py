@@ -105,18 +105,34 @@ def pick_gripper_side(lg: np.ndarray, rg: np.ndarray):
     return ("left", False) if ls >= rs else ("right", False)
 
 
-def decode_bgr2rgb(buf, resize=None) -> np.ndarray:
-    """JPEG 字节 → HWC uint8 RGB。
+def decode_rgb(buf, resize=None) -> np.ndarray:
+    """JPEG 字节 → HWC uint8 RGB。**不要翻通道。**
 
-    cv2.imdecode 出来是 BGR, 必须翻通道 —— 这类错误不会报错, 只表现为
-    模型在真机上对颜色的判断系统性偏移, 极难察觉。
+    ⚠️ 本函数第一版翻了通道, 理由是"cv2.imdecode 返回 BGR"。那条通则没错,
+    但**前提是 JPEG 由正常的 RGB 图像编码而来**。这里不是:
+
+        envs/utils/pkl2hdf5.py:15   cv2.imencode(".jpg", img)
+
+    上游是拿仿真的 **RGB 数组**直接喂 cv2.imencode(该函数按 BGR 解释输入)。
+    编码与解码用的是同一套(错位的)约定, 往返恒等 —— imdecode 出来就是原来
+    那个 RGB 数组。再翻一次就把它变成了 BGR。
+
+    RoboTwin 自己的 policy/ACT/process_data.py 解码后也不翻, 与此一致。
+
+    验证方法(2026-09-16 实测): 采集时的 video/*.mp4 是 ffmpeg 按 rgb24 直接写
+    仿真帧生成的, 可作真彩基准。逐面板比对得 imdecode 输出与其**同序**,
+    平均差 1.90(压缩噪声量级); 翻转版差 20+。目视亦可判决 —— 魔方在正确
+    通道序下是黄配绿, 翻转后变青蓝。
+
+    教训: 通道序错了不会报错, 只让预训练视觉先验失效。**找一个已知颜色的
+    物体目视确认一次**, 比任何推理都可靠。
     """
     img = cv2.imdecode(np.frombuffer(bytes(buf), np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError("JPEG 解码失败")
     if resize is not None:
         img = cv2.resize(img, resize, interpolation=cv2.INTER_AREA)
-    return np.ascontiguousarray(img[:, :, ::-1])
+    return np.ascontiguousarray(img)
 
 
 def load_instruction(inst_dir: Path, idx: int, key: str) -> str:
@@ -183,8 +199,8 @@ def main() -> int:
 
     # 用第一条探出图像尺寸, 以便声明 features
     la, ra, lg, rg, head0, wrist0 = load_episode(eps[0])
-    h_img = decode_bgr2rgb(head0[0], resize)
-    w_img = decode_bgr2rgb(wrist0[0], resize)
+    h_img = decode_rgb(head0[0], resize)
+    w_img = decode_rgb(wrist0[0], resize)
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
@@ -242,8 +258,8 @@ def main() -> int:
             ds.add_frame({
                 "observation.state": state14[t],
                 "action": state14[t + 1],
-                "observation.images.head": decode_bgr2rgb(head[t], resize),
-                "observation.images.wrist": decode_bgr2rgb(wrist[t], resize),
+                "observation.images.head": decode_rgb(head[t], resize),
+                "observation.images.wrist": decode_rgb(wrist[t], resize),
                 "task": task,
             })
         ds.save_episode()
